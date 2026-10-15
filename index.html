@@ -20,6 +20,7 @@
     background: radial-gradient(circle at 50% 0%, #1e293b 0%, #0f172a 60%);
   }
   h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #94a3b8; }
+  /* Mode switch */
   .modes { display: flex; gap: 8px; margin: 16px 0 8px; }
   .modes button {
     background: #1e293b; color: #94a3b8; border: 1px solid #334155;
@@ -27,6 +28,7 @@
     transition: all 0.2s;
   }
   .modes button.active { background: #38bdf8; border-color: #38bdf8; color: #0f172a; font-weight: 600; }
+  /* String selector */
   .strings { display: flex; gap: 6px; margin: 10px 0 4px; flex-wrap: wrap; justify-content: center; }
   .strings button {
     background: #1e293b; color: #cbd5e1; border: 1px solid #334155;
@@ -37,18 +39,22 @@
   .strings button.active { background: #38bdf8; color: #0f172a; border-color: #38bdf8; }
   .strings button.auto { width: auto; padding: 10px 14px; font-size: 0.8rem; }
   .strings button.detected { box-shadow: 0 0 0 2px #a78bfa; }
+  /* Display */
   .note-display { text-align: center; margin: 8px 0 4px; min-height: 120px; }
   .note-name { font-size: 4.5rem; font-weight: 700; line-height: 1; }
   .note-name.in-tune { color: #4ade80; text-shadow: 0 0 24px rgba(74, 222, 128, 0.4); }
   .freq { font-size: 0.85rem; color: #64748b; margin-top: 4px; }
   .cents-label { font-size: 1rem; margin-top: 6px; color: #94a3b8; min-height: 1.4em; }
+  /* Meter */
   .meter { position: relative; width: min(420px, 92vw); height: 56px; margin: 8px auto 4px; }
   .meter svg { width: 100%; height: 100%; }
   .needle { transition: transform 0.12s ease-out; transform-origin: 210px 50px; }
+  /* Tuning state strip */
   .state { font-size: 1.2rem; font-weight: 600; margin-top: 6px; min-height: 1.6em; }
   .state.flat { color: #f87171; }
   .state.sharp { color: #fb923c; }
   .state.ok { color: #4ade80; }
+  /* Buttons */
   .big-btn {
     margin-top: 20px; padding: 14px 40px; border-radius: 999px; border: none;
     background: linear-gradient(135deg, #38bdf8, #818cf8); color: #0f172a;
@@ -70,7 +76,7 @@
   <div class="strings" id="strings"></div>
 
   <div class="note-display">
-    <div class="note-name" id="note">&#8211;</div>
+    <div class="note-name" id="note">–</div>
     <div class="freq" id="freq"></div>
     <div class="cents-label" id="cents"></div>
   </div>
@@ -91,7 +97,7 @@
 
   <button class="big-btn" id="start">Start Tuner</button>
   <div class="error" id="err"></div>
-  <p class="hint">Pluck one string at a time, let it ring. Keep background noise low.</p>
+  <p class="hint" id="hint">Pluck one string at a time, let it ring. Keep background noise low.</p>
 
 <script>
 (function () {
@@ -111,14 +117,17 @@
     return 440 * Math.pow(2, (semis - 69) / 12);
   }
 
+  var IN_TUNE = 10; // cents tolerance - wide enough that a ringing string doesn't flicker
   var mode = "guitar";
-  var selected = 0;
+  var selected = 0;        // index into mode strings, or -1 for auto
   var audioCtx = null, analyser = null, raf = null, running = false;
 
   var $ = function (id) { return document.getElementById(id); };
   var noteEl = $("note"), freqEl = $("freq"), centsEl = $("cents"),
       stateEl = $("state"), needleEl = $("needle"),
       stringsEl = $("strings"), errEl = $("err"), startBtn = $("start");
+
+  // ---------- UI ----------
 
   function renderStrings() {
     stringsEl.innerHTML = "";
@@ -150,7 +159,7 @@
   });
 
   function resetDisplay() {
-    noteEl.textContent = "\u2013";
+    noteEl.textContent = "–";
     noteEl.classList.remove("in-tune");
     freqEl.textContent = "";
     centsEl.textContent = "";
@@ -159,16 +168,18 @@
     setNeedle(0);
   }
 
-  function setNeedle(cents) {
+  function setNeedle(cents) { // cents: -50..50
     var c = Math.max(-50, Math.min(50, cents));
     needleEl.style.transform = "rotate(" + (c * 1.7) + "deg)";
   }
+
+  // ---------- Pitch detection (autocorrelation) ----------
 
   function autoCorrelate(buf, sampleRate) {
     var SIZE = buf.length, rms = 0;
     for (var i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
     rms = Math.sqrt(rms / SIZE);
-    if (rms < 0.01) return -1;
+    if (rms < 0.01) return -1; // too quiet
 
     var THRES = 0.2, maxLag = Math.floor(SIZE / 2);
     var r = new Float32Array(maxLag), best = -1, bestVal = 0;
@@ -183,6 +194,7 @@
     }
     if (best === -1 || bestVal < THRES) return -1;
 
+    // parabolic interpolation around the peak
     var y1 = r[best - 1] || 0, y2 = r[best], y3 = r[best + 1] || 0;
     var denom = y1 - 2 * y2 + y3;
     var shift = denom ? (0.5 * (y3 - y1) / denom) : 0;
@@ -199,13 +211,25 @@
     };
   }
 
+  // ---------- Main loop ----------
+
   var buf = null;
+  var recent = [];   // last few raw frequency readings for smoothing
 
   function tick() {
     if (!running) return;
     analyser.getFloatTimeDomainData(buf);
     var f = autoCorrelate(buf, audioCtx.sampleRate);
-    if (f !== -1) update(f);
+
+    if (f === -1) { /* wait for signal */ }
+    else {
+      recent.push(f);
+      if (recent.length > 5) recent.shift();
+      // median of recent readings dampens single-frame jitter
+      var sorted = recent.slice().sort(function (a, b) { return a - b; });
+      update(sorted[Math.floor(sorted.length / 2)]);
+    }
+
     raf = requestAnimationFrame(tick);
   }
 
@@ -217,11 +241,12 @@
     if (mode !== "chromatic" && selected >= 0) {
       target = noteFreq(m.strings[selected]);
     } else {
+      // nearest target: nearest string note in instrument mode, else nearest semitone
       target = 440 * Math.pow(2, (info.midi - 69) / 12);
     }
 
     var cents = 1200 * Math.log2(f / target);
-    var inTune = Math.abs(cents) < 5;
+    var inTune = Math.abs(cents) < IN_TUNE;
 
     noteEl.textContent = info.name;
     noteEl.classList.toggle("in-tune", inTune);
@@ -229,17 +254,18 @@
     centsEl.textContent = (cents > 0 ? "+" : "") + cents.toFixed(0) + " cents";
     setNeedle(cents);
 
-    if (inTune) {
+    if (Math.abs(cents) < 5) {
       stateEl.textContent = "In tune";
       stateEl.className = "state ok";
     } else if (cents < 0) {
-      stateEl.textContent = "Too flat \u2014 tighten";
+      stateEl.textContent = "Too flat — tighten";
       stateEl.className = "state flat";
     } else {
-      stateEl.textContent = "Too sharp \u2014 loosen";
+      stateEl.textContent = "Too sharp — loosen";
       stateEl.className = "state sharp";
     }
 
+    // highlight nearest string button in instrument modes
     if (mode !== "chromatic") {
       var nearest = 0, nd = Infinity;
       for (var i = 0; i < m.strings.length; i++) {
@@ -250,6 +276,8 @@
       btns.forEach(function (b, i) { b.classList.toggle("detected", i === nearest && nd < 100); });
     }
   }
+
+  // ---------- Mic ----------
 
   function start() {
     errEl.style.display = "none";
@@ -277,6 +305,7 @@
 
   function stop() {
     running = false;
+    recent = [];
     if (raf) cancelAnimationFrame(raf);
     if (audioCtx) { audioCtx.close(); audioCtx = null; }
     startBtn.textContent = "Start Tuner";
