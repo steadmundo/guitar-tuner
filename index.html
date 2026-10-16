@@ -29,16 +29,55 @@
   }
   .modes button.active { background: #38bdf8; border-color: #38bdf8; color: #0f172a; font-weight: 600; }
   /* String selector */
-  .strings { display: flex; gap: 6px; margin: 10px 0 4px; flex-wrap: wrap; justify-content: center; }
-  .strings button {
-    background: #1e293b; color: #cbd5e1; border: 1px solid #334155;
-    width: 44px; padding: 10px 0; border-radius: 12px; font-size: 1rem; font-weight: 600; cursor: pointer;
+  /* Headstock */
+  .strings { display: flex; flex-direction: column; align-items: center; margin: 12px 0 4px; }
+  .strings.hidden { display: none; }
+  .headstock {
+    position: relative;
+    padding: 16px 14px 30px;
+    background: linear-gradient(160deg, #293545 0%, #1a2230 100%);
+    border: 1px solid #334155;
+    border-radius: 30px 30px 12px 12px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+  .headstock::after { /* the nut */
+    content: "";
+    position: absolute;
+    left: 12px; right: 12px; bottom: 8px;
+    height: 9px;
+    background: linear-gradient(#f1f5f9, #94a3b8);
+    border-radius: 5px;
+  }
+  .pegs { display: flex; justify-content: space-between; gap: 44px; }
+  .peg-col { display: flex; flex-direction: column; gap: 12px; }
+  .peg {
+    width: 52px; height: 52px; border-radius: 50%;
+    border: 2px solid #475569;
+    background: radial-gradient(circle at 35% 30%, #64748b, #334155 75%);
+    color: #e2e8f0; font-weight: 700; font-size: 0.9rem;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+  }
+  .peg:hover { transform: scale(1.08); border-color: #38bdf8; }
+  .peg.active {
+    background: radial-gradient(circle at 35% 30%, #7dd3fc, #0ea5e9 80%);
+    border-color: #7dd3fc; color: #0f172a;
+    box-shadow: 0 0 18px rgba(56, 189, 248, 0.5);
+    transform: scale(1.06);
+  }
+  .peg.detected { box-shadow: 0 0 0 3px #a78bfa, 0 0 18px rgba(167, 139, 250, 0.45); }
+  .peg.ringing { animation: peg-ring 0.9s ease-in-out infinite; }
+  @keyframes peg-ring {
+    0%, 100% { box-shadow: 0 0 0 3px #4ade80, 0 0 22px rgba(74, 222, 128, 0.6); }
+    50% { box-shadow: 0 0 0 3px #4ade80, 0 0 8px rgba(74, 222, 128, 0.3); }
+  }
+  .auto-btn {
+    margin-top: 10px;
+    background: #1e293b; color: #94a3b8; border: 1px solid #334155;
+    padding: 7px 16px; border-radius: 999px; font-size: 0.8rem; cursor: pointer;
     transition: all 0.15s;
   }
-  .strings button:hover { border-color: #38bdf8; }
-  .strings button.active { background: #38bdf8; color: #0f172a; border-color: #38bdf8; }
-  .strings button.auto { width: auto; padding: 10px 14px; font-size: 0.8rem; }
-  .strings button.detected { box-shadow: 0 0 0 2px #a78bfa; }
+  .auto-btn.active { background: #a78bfa; border-color: #a78bfa; color: #0f172a; font-weight: 600; }
   /* Display */
   .note-display { text-align: center; margin: 8px 0 4px; min-height: 120px; }
   .note-name { font-size: 4.5rem; font-weight: 700; line-height: 1; }
@@ -132,19 +171,48 @@
   function renderStrings() {
     stringsEl.innerHTML = "";
     var m = MODES[mode];
-    if (mode === "chromatic") return;
-    for (var i = 0; i < m.strings.length; i++) {
-      (function (idx) {
-        var b = document.createElement("button");
-        b.textContent = m.strings[idx];
-        b.className = idx === selected ? "active" : "";
-        b.onclick = function () { selected = (selected === idx) ? -1 : idx; renderStrings(); };
-        stringsEl.appendChild(b);
-      })(i);
+    if (mode === "chromatic") { stringsEl.classList.add("hidden"); return; }
+    stringsEl.classList.remove("hidden");
+
+    var notes = m.strings;
+    var half = Math.ceil(notes.length / 2);
+
+    var hs = document.createElement("div");
+    hs.className = "headstock";
+    var pegs = document.createElement("div");
+    pegs.className = "pegs";
+
+    var cols = [];
+    for (var c = 0; c < 2; c++) {
+      var col = document.createElement("div");
+      col.className = "peg-col";
+      pegs.appendChild(col);
+      cols.push(col);
     }
+
+    // left column = bass strings, right column = treble strings (top to bottom, like a real 3+3 / 2+2 headstock)
+    var layout = notes.slice(0, half)
+      .concat(notes.slice(half).reverse());
+
+    layout.forEach(function (noteName) {
+      var idx = notes.indexOf(noteName);
+      var col = idx < half ? cols[0] : cols[1];
+      var b = document.createElement("button");
+      b.className = "peg" + (idx === selected ? " active" : "");
+      b.textContent = noteName;
+      b.setAttribute("data-idx", idx);
+      b.title = "Tune to " + noteName;
+      b.onclick = function () { selected = (selected === idx) ? -1 : idx; renderStrings(); };
+      col.appendChild(b);
+    });
+
+    hs.appendChild(pegs);
+    stringsEl.appendChild(hs);
+
     var auto = document.createElement("button");
-    auto.className = "auto" + (selected === -1 ? " active" : "");
-    auto.textContent = "Auto";
+    auto.className = "auto-btn" + (selected === -1 ? " active" : "");
+    auto.textContent = "Auto \u2726";
+    auto.title = "Follow whatever string it hears";
     auto.onclick = function () { selected = -1; renderStrings(); };
     stringsEl.appendChild(auto);
   }
@@ -272,8 +340,13 @@
         var d = Math.abs(1200 * Math.log2(f / noteFreq(m.strings[i])));
         if (d < nd) { nd = d; nearest = i; }
       }
-      var btns = stringsEl.querySelectorAll("button:not(.auto)");
-      btns.forEach(function (b, i) { b.classList.toggle("detected", i === nearest && nd < 100); });
+      var pegs = stringsEl.querySelectorAll(".peg");
+      pegs.forEach(function (b) {
+        var idx = parseInt(b.getAttribute("data-idx"), 10);
+        var isHeard = idx === nearest && nd < 100;
+        b.classList.toggle("detected", isHeard && idx !== selected);
+        b.classList.toggle("ringing", isHeard && inTune);
+      });
     }
   }
 
